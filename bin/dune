@@ -1,0 +1,6 @@
+(executable
+ (name repl)
+ (public_name lambda_hat_repl)
+ (package lambda-hat)
+ (modules repl)
+ (libraries lambda_hat zed react lwt lwt.unix lwt_react lambda-term))

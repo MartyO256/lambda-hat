@@ -1,0 +1,6 @@
+(library
+ (name lambda_hat)
+ (modules :standard)
+ (libraries
+  yojson
+  (re_export angstrom)))
