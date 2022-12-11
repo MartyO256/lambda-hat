@@ -29,7 +29,8 @@ let rec pp_stage ppf stage =
 
 and pp_type ppf type_ =
   match type_ with
-  | Type.Variable { identifier } -> Identifier.pp ppf identifier
+  | Type.Variable { identifier } ->
+      Format.fprintf ppf "'%a" Identifier.pp identifier
   | Type.Arrow { domain; range } ->
       Format.fprintf ppf "@[<2>%a@ →@ %a@]"
         (fun ppf argument ->

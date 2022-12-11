@@ -10,6 +10,7 @@ module Interpreter = struct
     signature : Signature.t;
     evaluation_environment : expression Identifier.Map.t;
     fresh_variable_state : Typing.Fresh_variable_state.t;
+    typing_state : Typing.State.t;
   }
 
   let[@inline] prompt_number { prompt_number; _ } = prompt_number
@@ -19,9 +20,10 @@ module Interpreter = struct
   let[@inline] evaluation_environment { evaluation_environment; _ } =
     evaluation_environment
 
-  let[@inline] [@warning "-32"] fresh_variable_state { fresh_variable_state; _ }
-      =
+  let[@inline] fresh_variable_state { fresh_variable_state; _ } =
     fresh_variable_state
+
+  let[@inline] typing_state { typing_state; _ } = typing_state
 
   let initial_state =
     {
@@ -30,12 +32,22 @@ module Interpreter = struct
       signature = Syntax.empty_signature;
       evaluation_environment = Identifier.Map.empty;
       fresh_variable_state = Typing.Fresh_variable_state.initial_state;
+      typing_state = Typing.State.initial_state Syntax.empty_signature;
     }
 
   let set_signature signature state = { state with signature }
 
-  let[@warning "-32"] set_fresh_variable_state fresh_variable_state state =
+  let set_fresh_variable_state fresh_variable_state state =
     { state with fresh_variable_state }
+
+  let set_typing_state typing_state state = { state with typing_state }
+
+  let add_to_typing_context identifier type_ state =
+    {
+      state with
+      typing_state =
+        Typing.State.extend_typing identifier type_ (typing_state state);
+    }
 
   let reset_buffer state = { state with buffer = [] }
   let add_to_buffer line state = { state with buffer = line :: state.buffer }
@@ -76,45 +88,52 @@ module Interpreter = struct
     | Result.Ok declaration -> declaration
     | Result.Error cause -> raise (Parser_error cause)
 
-  let eval state input =
+  let evaluate_declaration state declaration =
+    let signature' = Syntax.add_declaration (signature state) declaration in
+    Validation.validate_declaration signature' declaration;
+    match declaration with
+    | Declaration.Value { identifier; expression } ->
+        let fresh_variable_state', inferred_type =
+          Typing.infer
+            (fresh_variable_state state)
+            (typing_state state) expression
+        in
+        let evaluated_expression =
+          Evaluation.evaluate (evaluation_environment state) expression
+        in
+        let output =
+          Format.asprintf "@[val %a = %a@]" Identifier.pp identifier
+            Syntax.pp_expression evaluated_expression
+        in
+        let state' =
+          state
+          |> next_state ~signature:signature'
+          |> add_value identifier evaluated_expression
+          |> set_fresh_variable_state fresh_variable_state'
+          |> set_typing_state
+               (Typing.State.set_signature signature' (typing_state state))
+          |> add_to_typing_context identifier inferred_type
+        in
+        (state', Option.some output)
+    | Declaration.Datatype _ ->
+        let state' =
+          next_state ~signature:signature' state
+          |> set_typing_state
+               (Typing.State.set_signature signature' (typing_state state))
+        in
+        (state', Option.none)
+    | declaration -> raise (Malformed_declaration declaration)
+
+  let evaluate_input state input =
     try
       let trimmed_input = String.trim input in
-      if String.ends_with ~suffix trimmed_input then (
+      if String.ends_with ~suffix trimmed_input then
         let truncated_input = string_without_suffix trimmed_input in
         let reconstructed_input =
           String.concat "" (List.rev (truncated_input :: state.buffer))
         in
         let parsed_declaration = parse_declaration reconstructed_input in
-        let signature' =
-          Syntax.add_declaration (signature state) parsed_declaration
-        in
-        Validation.validate_declaration signature' parsed_declaration;
-        match parsed_declaration with
-        | Declaration.Value { identifier; expression } ->
-            (*= let fresh_variable_state', _inferred_type =
-              Typing.infer
-                (fresh_variable_state state)
-                (Typing.State.initial_state (signature state))
-                expression
-            in *)
-            let evaluated_expression =
-              Evaluation.evaluate (evaluation_environment state) expression
-            in
-            let output =
-              Format.asprintf "@[val %a = %a@]" Identifier.pp identifier
-                Syntax.pp_expression evaluated_expression
-            in
-            let state' =
-              state
-              |> next_state ~signature:signature'
-              |> add_value identifier evaluated_expression
-              (*= |> set_fresh_variable_state fresh_variable_state' *)
-            in
-            (state', Option.some output)
-        | Declaration.Datatype _ ->
-            let state' = next_state ~signature:signature' state in
-            (state', Option.none)
-        | declaration -> raise (Malformed_declaration declaration))
+        evaluate_declaration state parsed_declaration
       else (add_to_buffer input state, Option.none)
     with error -> (next_state state, Option.some (Printexc.to_string error))
 end
@@ -159,7 +178,9 @@ module Repl = struct
     >>= function
     | Some command -> (
         let command_utf8 = Zed_string.to_utf8 command in
-        let s', out = Interpreter.eval interpreter_state command_utf8 in
+        let s', out =
+          Interpreter.evaluate_input interpreter_state command_utf8
+        in
         match out with
         | Option.Some out ->
             LTerm.fprintls term (make_output interpreter_state out)

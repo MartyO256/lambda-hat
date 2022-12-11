@@ -1,24 +1,38 @@
 open Syntax_definition
 
-let is_substage s s' =
+let rec is_substage s s' =
   match (s, s') with
-  | s, s' when s = s' -> true
-  | s, Stage.Successor { stage = s' } when s = s' -> true
-  | _, Stage.Infinity -> true
+  | s, s' when s = s' (* refl *) -> true
+  | s, Stage.Successor { stage = s' } when s = s' (* hat *) -> true
+  | _, Stage.Infinity (* infty *) -> true
+  | Stage.Closure { stage; environment }, stage2 ->
+      let stage1' = Substitution.apply_stage_closure environment stage in
+      is_substage stage1' stage2
+  | stage1, Stage.Closure { stage; environment } ->
+      let stage2' = Substitution.apply_stage_closure environment stage in
+      is_substage stage1 stage2'
   | _ -> false
 
 let rec is_subtype t t' =
   match (t, t') with
-  | t, t' when t = t' -> true
+  | t, t' when t = t' (* refl *) -> true
   | ( Type.Datatype { identifier = i1; stage = s1; arguments = as1 },
-      Type.Datatype { identifier = i2; stage = s2; arguments = as2 } ) -> (
+      Type.Datatype { identifier = i2; stage = s2; arguments = as2 } )
+  (* data *) -> (
       try
         Identifier.equal i1 i2 && is_substage s1 s2
         && List.for_all2 is_subtype as1 as2
       with Invalid_argument _ -> false)
   | ( Type.Arrow { domain = d1; range = r1 },
-      Type.Arrow { domain = d2; range = r2 } ) ->
+      Type.Arrow { domain = d2; range = r2 } )
+  (* funct *) ->
       is_subtype d2 d1 && is_subtype r1 r2
+  | Type.Closure { type_; environment }, type2 ->
+      let type1' = Substitution.apply_type_closure environment type_ in
+      is_subtype type1' type2
+  | type1, Type.Closure { type_; environment } ->
+      let type2' = Substitution.apply_type_closure environment type_ in
+      is_subtype type1 type2'
   | _ -> false
 
 exception Stage_unification_error of { stage1 : stage; stage2 : stage }
@@ -26,86 +40,89 @@ exception Stage_variable_occurs of { identifier : identifier; stage : stage }
 exception Type_unification_error of { type1 : type_; type2 : type_ }
 exception Type_variable_occurs of { identifier : identifier; type_ : type_ }
 
-let rec unify_stages unifier stage1 stage2 =
-  match[@warning "-11"] (stage1, stage2) with
+let rec substage_unifier unifier stage1 stage2 =
+  match (stage1, stage2) with
+  | stage1, stage2 when stage1 = stage2 (* refl *) -> unifier
+  | stage1, Stage.Successor { stage = stage2' } when stage1 = stage2' (* hat *)
+    ->
+      unifier
+  | _stage1, Stage.Infinity (* infty *) -> unifier
   | Stage.Closure { stage; environment }, stage2 ->
       let stage1' = Substitution.apply_stage_closure environment stage in
-      unify_stages unifier stage1' stage2
+      substage_unifier unifier stage1' stage2
   | stage1, Stage.Closure { stage; environment } ->
       let stage2' = Substitution.apply_stage_closure environment stage in
-      unify_stages unifier stage1 stage2'
-  | Stage.Variable { identifier = i1 }, Stage.Variable { identifier = i2 }
-    when Identifier.equal i1 i2 ->
-      unifier
-  | Stage.Variable { identifier }, stage2 ->
-      unify_stage_variable unifier identifier stage2
-  | stage1, Stage.Variable { identifier } ->
-      unify_stage_variable unifier identifier stage1
-  | Stage.Infinity, Stage.Infinity -> unifier
-  | Stage.Successor { stage = stage1' }, Stage.Infinity ->
-      unify_stages unifier stage1' Syntax_constructors.make_stage_infinity
-  | Stage.Infinity, Stage.Successor { stage = stage2' } ->
-      unify_stages unifier Syntax_constructors.make_stage_infinity stage2'
-  | Stage.Successor { stage = Stage.Infinity }, stage2 ->
-      unify_stages unifier Syntax_constructors.make_stage_infinity stage2
-  | stage1, Stage.Successor { stage = Stage.Infinity } ->
-      unify_stages unifier stage1 Syntax_constructors.make_stage_infinity
+      substage_unifier unifier stage1 stage2'
   | Stage.Successor { stage = stage1' }, Stage.Successor { stage = stage2' } ->
-      unify_stages unifier stage1' stage2'
+      substage_unifier unifier stage1' stage2'
+  | Stage.Variable { identifier }, stage2 -> (
+      if Variables.variable_occurs_in_stage identifier stage2 then
+        raise (Stage_variable_occurs { identifier; stage = stage2 })
+      else
+        match Identifier.Map.find_opt identifier unifier with
+        | Option.None -> Identifier.Map.add identifier (`Stage stage2) unifier
+        | Option.Some (`Stage stage1') ->
+            substage_unifier unifier stage1' stage2
+        | Option.Some _ -> assert false)
+  | stage1, Stage.Variable { identifier } -> (
+      if Variables.variable_occurs_in_stage identifier stage1 then
+        raise (Stage_variable_occurs { identifier; stage = stage1 })
+      else
+        match Identifier.Map.find_opt identifier unifier with
+        | Option.None -> Identifier.Map.add identifier (`Stage stage1) unifier
+        | Option.Some (`Stage stage2') ->
+            substage_unifier unifier stage1 stage2'
+        | Option.Some _ -> assert false)
   | _ -> raise (Stage_unification_error { stage1; stage2 })
 
-and unify_stage_variable unifier identifier stage =
-  if Variables.variable_occurs_in_stage identifier stage then
-    raise (Stage_variable_occurs { identifier; stage })
-  else
-    match Identifier.Map.find_opt identifier unifier with
-    | Option.None -> Identifier.Map.add identifier (`Stage stage) unifier
-    | Option.Some (`Stage stage') -> unify_stages unifier stage stage'
-    | Option.Some _ -> assert false
-
-and unify_types unifier type1 type2 =
+let rec subtype_unifier unifier type1 type2 =
   match (type1, type2) with
-  | Type.Closure { type_; environment }, type2 ->
-      let type1' = Substitution.apply_type_closure environment type_ in
-      unify_types unifier type1' type2
-  | type1, Type.Closure { type_; environment } ->
-      let type2' = Substitution.apply_type_closure environment type_ in
-      unify_types unifier type1 type2'
+  | type1, type2 when type1 = type2 (* refl *) -> unifier
   | ( Type.Arrow { domain = d1; range = r1 },
-      Type.Arrow { domain = d2; range = r2 } ) ->
-      let unifier' = unify_types unifier d1 d2 in
-      unify_types unifier' r1 r2
-  | Type.Variable { identifier = i1 }, Type.Variable { identifier = i2 }
-    when Identifier.equal i1 i2 ->
-      unifier
-  | Type.Variable { identifier }, type2 ->
-      unify_type_variable unifier identifier type2
-  | type1, Type.Variable { identifier } ->
-      unify_type_variable unifier identifier type1
+      Type.Arrow { domain = d2; range = r2 } )
+  (* func *) ->
+      let unifier' = subtype_unifier unifier d2 d1 in
+      subtype_unifier unifier' r1 r2
   | ( Type.Datatype { identifier = i1; stage = s1; arguments = as1 },
       Type.Datatype { identifier = i2; stage = s2; arguments = as2 } ) ->
       if Identifier.equal i1 i2 then
-        let unifier' = unify_stages unifier s1 s2 in
+        let unifier' = substage_unifier unifier s1 s2 in
         try
           List.fold_left2
-            (fun unifier a1 a2 -> unify_types unifier a1 a2)
+            (fun unifier a1 a2 -> subtype_unifier unifier a1 a2)
             unifier' as1 as2
         with Invalid_argument _ ->
           raise (Type_unification_error { type1; type2 })
       else raise (Type_unification_error { type1; type2 })
+  | Type.Closure { type_; environment }, type2 ->
+      let type1' = Substitution.apply_type_closure environment type_ in
+      subtype_unifier unifier type1' type2
+  | type1, Type.Closure { type_; environment } ->
+      let type2' = Substitution.apply_type_closure environment type_ in
+      subtype_unifier unifier type1 type2'
+  | Type.Variable { identifier = i1 }, Type.Variable { identifier = i2 }
+    when Identifier.equal i1 i2 ->
+      unifier
+  | Type.Variable { identifier }, type2 -> (
+      if Variables.variable_occurs_in_type identifier type2 then
+        raise (Type_variable_occurs { identifier; type_ = type2 })
+      else
+        match Identifier.Map.find_opt identifier unifier with
+        | Option.None -> Identifier.Map.add identifier (`Type type2) unifier
+        | Option.Some (`Type type1') -> subtype_unifier unifier type1' type2
+        | Option.Some _ -> assert false)
+  | type1, Type.Variable { identifier } -> (
+      if Variables.variable_occurs_in_type identifier type1 then
+        raise (Type_variable_occurs { identifier; type_ = type1 })
+      else
+        match Identifier.Map.find_opt identifier unifier with
+        | Option.None -> Identifier.Map.add identifier (`Type type1) unifier
+        | Option.Some (`Type type2') -> subtype_unifier unifier type1 type2'
+        | Option.Some _ -> assert false)
   | _ -> raise (Type_unification_error { type1; type2 })
 
-and unify_type_variable unifier identifier type_ =
-  if Variables.variable_occurs_in_type identifier type_ then
-    raise (Type_variable_occurs { identifier; type_ })
-  else
-    match Identifier.Map.find_opt identifier unifier with
-    | Option.None -> Identifier.Map.add identifier (`Type type_) unifier
-    | Option.Some (`Type type_') -> unify_types unifier type_ type_'
-    | Option.Some _ -> assert false
-
-let unify_stages = unify_stages Identifier.Map.empty
-let unify_types = unify_types Identifier.Map.empty
+let substage_unifier = substage_unifier Identifier.Map.empty
+let subtype_unifier = subtype_unifier Identifier.Map.empty
 
 exception Expected_datatype_type
 
@@ -218,6 +235,7 @@ module State = struct
   let[@inline] signature { signature; _ } = signature
   let[@inline] context { context; _ } = context
   let initial_state signature = { signature; context = Identifier.Map.empty }
+  let[@inline] set_signature signature state = { state with signature }
 
   let lookup_typing state identifier =
     Identifier.Map.find_opt identifier (context state)
@@ -393,7 +411,7 @@ and check variables_state inference_state expression type_ =
       | Type.Arrow { domain; range } -> (
           match parameter_type with
           | Option.Some parameter_type ->
-              ignore (unify_types domain parameter_type);
+              ignore (subtype_unifier domain parameter_type);
               let inference_state' =
                 State.extend_typing parameter_identifier domain inference_state
               in
@@ -448,14 +466,20 @@ and check variables_state inference_state expression type_ =
             variables_state' constructor_declarations
       | _ -> raise (Type_checking_error { expression; type_ }))
   | Expression.Constructor _ | Expression.Rec _ | Expression.Application _
-  | Expression.Annotated _ | Expression.Variable _ ->
+  | Expression.Annotated _ | Expression.Variable _ -> (
       let variables_state', tau =
         infer variables_state inference_state expression
       in
-      if is_subtype tau type_ then variables_state'
-      else
+      try
+        let unifier = subtype_unifier tau type_ in
+        assert (
+          is_subtype
+            (Substitution.apply_substitution_type unifier tau)
+            (Substitution.apply_substitution_type unifier type_));
+        variables_state'
+      with _ ->
         raise
-          (Type_subtyping_error { expression; subtype = tau; suptype = type_ })
+          (Type_subtyping_error { expression; subtype = tau; suptype = type_ }))
   | Expression.Closure { expression; environment } ->
       check variables_state inference_state
         (Substitution.apply_expression_closure environment expression)
