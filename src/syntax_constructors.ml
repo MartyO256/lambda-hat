@@ -1,15 +1,26 @@
 open Syntax_definition
 
 let make_stage_variable identifier = Stage.Variable { identifier }
+
+let make_stage_existential_variable identifier =
+  Stage.Existential_variable { identifier }
+
 let make_stage_successor stage = Stage.Successor { stage }
 let make_stage_infinity = Stage.Infinity
 let make_type_variable identifier = Type.Variable { identifier }
+
+let make_type_existential_variable identifier =
+  Type.Existential_variable { identifier }
+
 let make_type_arrow ~domain ~range = Type.Arrow { domain; range }
 
 let make_type_datatype ~identifier ~stage ~arguments =
   Type.Datatype { identifier; stage; arguments }
 
 let make_expression_variable identifier = Expression.Variable { identifier }
+
+let make_expression_existential_variable identifier =
+  Expression.Existential_variable { identifier }
 
 let make_expression_constructor identifier =
   Expression.Constructor { identifier }
@@ -60,7 +71,8 @@ let add_declaration signature declaration =
       | Declaration.Constructor { identifier; _ } ->
           let declarations_rev' =
             (signature', declaration) :: signature.Signature.declarations_rev
-          and bindings' =
+          in
+          let bindings' =
             Identifier.Map.add identifier (signature', declaration)
               signature.Signature.bindings
           in
@@ -86,7 +98,8 @@ let add_declaration signature declaration =
                   (fun (_, declaration) -> (signature', declaration))
                   declaration_bindings
                 @ signature.Signature.declarations_rev
-              and bindings' =
+              in
+              let bindings' =
                 List.fold_left
                   (fun bindings (identifier, declaration) ->
                     Identifier.Map.add identifier (signature', declaration)
@@ -102,7 +115,8 @@ let add_declaration signature declaration =
           let signature' = lazy signature in
           let declarations_rev' =
             (signature', declaration) :: signature.Signature.declarations_rev
-          and bindings' =
+          in
+          let bindings' =
             Identifier.Map.add identifier (signature', declaration)
               signature.Signature.bindings
           in
@@ -120,7 +134,7 @@ let () =
   Printexc.register_printer (function
     | Duplicate_identifiers identifiers ->
         Option.some
-          (Format.asprintf "Duplicate identifiers @[%a@] in declaration"
+          (Format.asprintf "Duplicate identifiers@ %a@ in declaration"
              (Format.pp_print_list
                 ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ")
                 Identifier.pp)

@@ -20,19 +20,13 @@ exception Free_variable of Identifier.t
 exception Invalid_applicand of expression
 exception Invalid_rec of expression
 exception Invalid_case_analysis of expression
+exception Invalid_existential_expression_variable of expression
 exception Inexhaustive_case_analysis of expression
-
-let[@warning "-32"] print_state state =
-  Format.fprintf Format.std_formatter "{@;%a@;}@."
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-       (fun ppf (identifier, value) ->
-         Format.fprintf ppf "%a :@ %a" Identifier.pp identifier
-           Syntax_pp.pp_expression value))
-    (Identifier.Map.bindings state)
 
 let rec evaluate state expression =
   match expression with
+  | Expression.Existential_variable _ ->
+      raise (Invalid_existential_expression_variable expression)
   | Expression.Variable { identifier } -> (
       match Identifier.Map.find_opt identifier state with
       | Option.None -> raise (Free_variable identifier)
@@ -147,28 +141,32 @@ let () =
   Printexc.register_printer (function
     | Free_variable variable ->
         Option.some
-          (Format.asprintf "Free variable @[%a@] encountered during evaluation"
+          (Format.asprintf "Free variable %a encountered during evaluation"
              Identifier.pp variable)
     | Invalid_applicand applicand ->
         Option.some
-          (Format.asprintf
-             "Invalid applicand @[%a@] encountered during evaluation"
+          (Format.asprintf "Invalid applicand %a encountered during evaluation"
              Syntax_pp.pp_expression applicand)
     | Invalid_rec expression ->
         Option.some
           (Format.asprintf
-             "Invalid recursive expression @[%a@] encountered during evaluation"
+             "Invalid recursive expression %a encountered during evaluation"
+             Syntax_pp.pp_expression expression)
+    | Invalid_existential_expression_variable expression ->
+        Option.some
+          (Format.asprintf
+             "Invalid existential expression variable %a encountered during \
+              evaluation"
              Syntax_pp.pp_expression expression)
     | Invalid_case_analysis expression ->
         Option.some
           (Format.asprintf
-             "Invalid case analysis expression @[%a@] encountered during \
-              evaluation"
+             "Invalid case analysis expression %a encountered during evaluation"
              Syntax_pp.pp_expression expression)
     | Inexhaustive_case_analysis expression ->
         Option.some
           (Format.asprintf
-             "Inexhaustive case analysis expression @[%a@] encountered during \
+             "Inexhaustive case analysis expression %a encountered during \
               evaluation"
              Syntax_pp.pp_expression expression)
     | _ -> Option.none)

@@ -16,6 +16,9 @@ let json_of_identifier = json_of_string
 
 let rec json_of_stage stage =
   match stage with
+  | Stage.Existential_variable { identifier } ->
+      json_of_variant ~name:"Stage.Existential_variable"
+        ~data:[ ("identifier", json_of_identifier identifier) ]
   | Stage.Variable { identifier } ->
       json_of_variant ~name:"Stage.Variable"
         ~data:[ ("identifier", json_of_identifier identifier) ]
@@ -24,10 +27,25 @@ let rec json_of_stage stage =
         ~data:[ ("stage", json_of_stage stage) ]
   | Stage.Infinity -> json_of_variant ~name:"Stage.Infinity" ~data:[]
   | Stage.Closure { stage; environment } ->
-      json_of_stage (Substitution.apply_stage_closure environment stage)
+      json_of_variant ~name:"Stage.Closure"
+        ~data:
+          [
+            ("stage", json_of_stage stage);
+            ("environment", json_of_stage_environment environment);
+          ]
+
+and json_of_stage_environment environment =
+  json_of_association
+    (Identifier.Map.fold
+       (fun identifier stage accumulator ->
+         (identifier, json_of_stage stage) :: accumulator)
+       environment [])
 
 and json_of_type type_ =
   match type_ with
+  | Type.Existential_variable { identifier } ->
+      json_of_variant ~name:"Type.Existential_variable"
+        ~data:[ ("identifier", json_of_identifier identifier) ]
   | Type.Variable { identifier } ->
       json_of_variant ~name:"Type.Variable"
         ~data:[ ("identifier", json_of_identifier identifier) ]
@@ -43,10 +61,25 @@ and json_of_type type_ =
             ("arguments", json_of_list json_of_type arguments);
           ]
   | Type.Closure { type_; environment } ->
-      json_of_type (Substitution.apply_type_closure environment type_)
+      json_of_variant ~name:"Type.Closure"
+        ~data:
+          [
+            ("type_", json_of_type type_);
+            ("environment", json_of_type_environment environment);
+          ]
+
+and json_of_type_environment environment =
+  json_of_association
+    (Identifier.Map.fold
+       (fun identifier type_ accumulator ->
+         (identifier, json_of_type type_) :: accumulator)
+       environment [])
 
 and json_of_expression expression =
   match expression with
+  | Expression.Existential_variable { identifier } ->
+      json_of_variant ~name:"Expression.Existential_variable"
+        ~data:[ ("identifier", json_of_identifier identifier) ]
   | Expression.Variable { identifier } ->
       json_of_variant ~name:"Expression.Variable"
         ~data:[ ("identifier", json_of_identifier identifier) ]
@@ -95,8 +128,19 @@ and json_of_expression expression =
             ("type_", json_of_type type_);
           ]
   | Expression.Closure { expression; environment } ->
-      json_of_expression
-        (Substitution.apply_expression_closure environment expression)
+      json_of_variant ~name:"Expression.Closure"
+        ~data:
+          [
+            ("expression", json_of_expression expression);
+            ("environment", json_of_expression_environment environment);
+          ]
+
+and json_of_expression_environment environment =
+  json_of_association
+    (Identifier.Map.fold
+       (fun identifier expression accumulator ->
+         (identifier, json_of_expression expression) :: accumulator)
+       environment [])
 
 and json_of_declaration declaration =
   match declaration with

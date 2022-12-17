@@ -39,6 +39,12 @@ exception
 
 let rec apply_substitution_stage substitution stage =
   match stage with
+  | Stage.Existential_variable { identifier } -> (
+      match Identifier.Map.find_opt identifier substitution with
+      | Option.Some (`Stage stage') -> stage'
+      | Option.Some _ ->
+          raise (Invalid_stage_substitution { substitution; identifier })
+      | Option.None -> stage)
   | Stage.Variable { identifier } -> (
       match Identifier.Map.find_opt identifier substitution with
       | Option.Some (`Stage stage') -> stage'
@@ -58,6 +64,12 @@ let rec apply_substitution_stage substitution stage =
 
 and apply_substitution_type substitution type_ =
   match type_ with
+  | Type.Existential_variable { identifier } -> (
+      match Identifier.Map.find_opt identifier substitution with
+      | Option.Some (`Type type_') -> type_'
+      | Option.Some _ ->
+          raise (Invalid_type_substitution { substitution; identifier })
+      | Option.None -> type_)
   | Type.Variable { identifier } -> (
       match Identifier.Map.find_opt identifier substitution with
       | Option.Some (`Type type_') -> type_'
@@ -84,6 +96,12 @@ and apply_substitution_type substitution type_ =
 
 and apply_substitution_expression substitution expression =
   match expression with
+  | Expression.Existential_variable { identifier } -> (
+      match Identifier.Map.find_opt identifier substitution with
+      | Option.Some (`Expression expression') -> expression'
+      | Option.Some _ ->
+          raise (Invalid_expression_substitution { substitution; identifier })
+      | Option.None -> expression)
   | Expression.Variable { identifier } -> (
       match Identifier.Map.find_opt identifier substitution with
       | Option.Some (`Expression expression') -> expression'
@@ -102,13 +120,13 @@ and apply_substitution_expression substitution expression =
       Syntax_constructors.make_expression_abstraction ~parameter_identifier
         ~parameter_type:parameter_type' ~body:body'
   | Expression.Application { applicand; argument } ->
-      let applicand' = apply_substitution_expression substitution applicand
-      and argument' = apply_substitution_expression substitution argument in
+      let applicand' = apply_substitution_expression substitution applicand in
+      let argument' = apply_substitution_expression substitution argument in
       Syntax_constructors.make_expression_application ~applicand:applicand'
         ~argument:argument'
   | Expression.Case { scrutinee; branches } ->
-      let scrutinee' = apply_substitution_expression substitution scrutinee
-      and branches' =
+      let scrutinee' = apply_substitution_expression substitution scrutinee in
+      let branches' =
         List.map
           (fun (identifier, body) ->
             let body' = apply_substitution_expression substitution body in
@@ -154,16 +172,15 @@ let () =
   Printexc.register_printer (function
     | Invalid_stage_substitution { identifier; _ } ->
         Option.some
-          (Format.asprintf
-             "Invalid stage substitution for stage variable @[%a@]"
+          (Format.asprintf "Invalid stage substitution for stage variable@ %a"
              Identifier.pp identifier)
     | Invalid_type_substitution { identifier; _ } ->
         Option.some
-          (Format.asprintf "Invalid type substitution for type variable @[%a@]"
+          (Format.asprintf "Invalid type substitution for type variable@ %a"
              Identifier.pp identifier)
     | Invalid_expression_substitution { identifier; _ } ->
         Option.some
           (Format.asprintf
-             "Invalid expression substitution for expression variable @[%a@]"
+             "Invalid expression substitution for expression variable@ %a"
              Identifier.pp identifier)
     | _ -> Option.none)

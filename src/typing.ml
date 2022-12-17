@@ -11,6 +11,8 @@ let rec is_substage s s' =
   | stage1, Stage.Closure { stage; environment } ->
       let stage2' = Substitution.apply_stage_closure environment stage in
       is_substage stage1 stage2'
+  | Stage.Existential_variable _, _ -> true
+  | _, Stage.Existential_variable _ -> true
   | _ -> false
 
 let rec is_subtype t t' =
@@ -33,6 +35,8 @@ let rec is_subtype t t' =
   | type1, Type.Closure { type_; environment } ->
       let type2' = Substitution.apply_type_closure environment type_ in
       is_subtype type1 type2'
+  | Type.Existential_variable _, _ -> true
+  | _, Type.Existential_variable _ -> true
   | _ -> false
 
 exception Stage_unification_error of { stage1 : stage; stage2 : stage }
@@ -42,11 +46,9 @@ exception Type_variable_occurs of { identifier : identifier; type_ : type_ }
 
 let rec substage_unifier unifier stage1 stage2 =
   match (stage1, stage2) with
-  | stage1, stage2 when stage1 = stage2 (* refl *) -> unifier
-  | stage1, Stage.Successor { stage = stage2' } when stage1 = stage2' (* hat *)
-    ->
-      unifier
-  | _stage1, Stage.Infinity (* infty *) -> unifier
+  | stage1, stage2 when is_substage stage1 stage2 -> unifier
+  | stage1, Stage.Successor { stage = stage2' } when stage1 = stage2' -> unifier
+  | _stage1, Stage.Infinity -> unifier
   | Stage.Closure { stage; environment }, stage2 ->
       let stage1' = Substitution.apply_stage_closure environment stage in
       substage_unifier unifier stage1' stage2
@@ -55,7 +57,7 @@ let rec substage_unifier unifier stage1 stage2 =
       substage_unifier unifier stage1 stage2'
   | Stage.Successor { stage = stage1' }, Stage.Successor { stage = stage2' } ->
       substage_unifier unifier stage1' stage2'
-  | Stage.Variable { identifier }, stage2 -> (
+  | Stage.Existential_variable { identifier }, stage2 -> (
       if Variables.variable_occurs_in_stage identifier stage2 then
         raise (Stage_variable_occurs { identifier; stage = stage2 })
       else
@@ -64,7 +66,7 @@ let rec substage_unifier unifier stage1 stage2 =
         | Option.Some (`Stage stage1') ->
             substage_unifier unifier stage1' stage2
         | Option.Some _ -> assert false)
-  | stage1, Stage.Variable { identifier } -> (
+  | stage1, Stage.Existential_variable { identifier } -> (
       if Variables.variable_occurs_in_stage identifier stage1 then
         raise (Stage_variable_occurs { identifier; stage = stage1 })
       else
@@ -77,10 +79,9 @@ let rec substage_unifier unifier stage1 stage2 =
 
 let rec subtype_unifier unifier type1 type2 =
   match (type1, type2) with
-  | type1, type2 when type1 = type2 (* refl *) -> unifier
+  | type1, type2 when is_subtype type1 type2 -> unifier
   | ( Type.Arrow { domain = d1; range = r1 },
-      Type.Arrow { domain = d2; range = r2 } )
-  (* func *) ->
+      Type.Arrow { domain = d2; range = r2 } ) ->
       let unifier' = subtype_unifier unifier d2 d1 in
       subtype_unifier unifier' r1 r2
   | ( Type.Datatype { identifier = i1; stage = s1; arguments = as1 },
@@ -100,10 +101,7 @@ let rec subtype_unifier unifier type1 type2 =
   | type1, Type.Closure { type_; environment } ->
       let type2' = Substitution.apply_type_closure environment type_ in
       subtype_unifier unifier type1 type2'
-  | Type.Variable { identifier = i1 }, Type.Variable { identifier = i2 }
-    when Identifier.equal i1 i2 ->
-      unifier
-  | Type.Variable { identifier }, type2 -> (
+  | Type.Existential_variable { identifier }, type2 -> (
       if Variables.variable_occurs_in_type identifier type2 then
         raise (Type_variable_occurs { identifier; type_ = type2 })
       else
@@ -111,7 +109,7 @@ let rec subtype_unifier unifier type1 type2 =
         | Option.None -> Identifier.Map.add identifier (`Type type2) unifier
         | Option.Some (`Type type1') -> subtype_unifier unifier type1' type2
         | Option.Some _ -> assert false)
-  | type1, Type.Variable { identifier } -> (
+  | type1, Type.Existential_variable { identifier } -> (
       if Variables.variable_occurs_in_type identifier type1 then
         raise (Type_variable_occurs { identifier; type_ = type1 })
       else
@@ -128,7 +126,8 @@ exception Expected_datatype_type
 
 let rec get_constructor_type_datatype constructor_type =
   match constructor_type with
-  | Type.Variable _ -> raise Expected_datatype_type
+  | Type.Existential_variable _ | Type.Variable _ ->
+      raise Expected_datatype_type
   | Type.Arrow { range; _ } -> get_constructor_type_datatype range
   | Type.Datatype { identifier; _ } -> identifier
   | Type.Closure { type_; environment } ->
@@ -140,21 +139,22 @@ let rec get_arrow_type_inputs type_ =
   | Type.Closure { type_; environment } ->
       get_arrow_type_inputs (Substitution.apply_type_closure environment type_)
   | Type.Arrow { domain; range } -> domain :: get_arrow_type_inputs range
-  | Type.Datatype _ | Type.Variable _ -> []
+  | Type.Datatype _ | Type.Existential_variable _ | Type.Variable _ -> []
 
 let rec guard_arrow_type type_ =
   match type_ with
   | Type.Closure { type_; environment } ->
       guard_arrow_type (Substitution.apply_type_closure environment type_)
   | Type.Arrow { domain; range } -> Option.some (domain, range)
-  | Type.Datatype _ | Type.Variable _ -> Option.none
+  | Type.Datatype _ | Type.Existential_variable _ | Type.Variable _ ->
+      Option.none
 
 exception
   Arity_mismatch of { parameters : identifier List.t; arguments : type_ List.t }
 
 let rec replace_all_datatype_occurrences substitute type_ =
   match type_ with
-  | Type.Variable _ -> type_
+  | Type.Existential_variable _ | Type.Variable _ -> type_
   | Type.Closure { type_; environment } ->
       replace_all_datatype_occurrences substitute
         (Substitution.apply_type_closure environment type_)
@@ -200,7 +200,7 @@ let instantiate_constructor_type signature constructor_identifier stage
   in
   Substitution.apply_substitution_type
     (Substitution.lift_type_substitution substitution)
-    type_
+    (Variables.replace_type_variables_with_existential_type_variables type_)
 
 module Fresh_variable_state = struct
   type t = { variables_generated : Int.t }
@@ -214,19 +214,28 @@ module Fresh_variable_state = struct
     { variables_generated = variables_generated state + 1 }
 
   let fresh_stage_variable state =
-    let variable = "#S" ^ string_of_int (variables_generated state) in
-    ( Syntax_constructors.make_stage_variable variable,
-      increment_variables_generated state )
+    let identifier = "#S" ^ string_of_int (variables_generated state) in
+    let variable =
+      Syntax_constructors.make_stage_existential_variable identifier
+    in
+    let state' = increment_variables_generated state in
+    (state', variable)
 
   let fresh_type_variable state =
-    let variable = "#T" ^ string_of_int (variables_generated state) in
-    ( Syntax_constructors.make_type_variable variable,
-      increment_variables_generated state )
+    let identifier = "#T" ^ string_of_int (variables_generated state) in
+    let variable =
+      Syntax_constructors.make_type_existential_variable identifier
+    in
+    let state' = increment_variables_generated state in
+    (state', variable)
 
   let fresh_expression_variable state =
-    let variable = "#E" ^ string_of_int (variables_generated state) in
-    ( Syntax_constructors.make_expression_variable variable,
-      increment_variables_generated state )
+    let identifier = "#E" ^ string_of_int (variables_generated state) in
+    let variable =
+      Syntax_constructors.make_expression_existential_variable identifier
+    in
+    let state' = increment_variables_generated state in
+    (state', variable)
 end
 
 module State = struct
@@ -250,6 +259,7 @@ module State = struct
     Signature_helpers.lookup_constructor (signature state) identifier
 end
 
+exception Existential_variable of identifier
 exception Free_variable of identifier
 exception Apply_non_function of type_
 exception Non_synthesizing_expression of expression
@@ -279,6 +289,8 @@ exception
 
 let rec infer variables_state inference_state expression =
   match expression with
+  | Expression.Existential_variable { identifier } ->
+      raise (Existential_variable identifier)
   | Expression.Variable { identifier } -> (
       match State.lookup_typing inference_state identifier with
       | Option.None -> raise (Free_variable identifier)
@@ -293,17 +305,17 @@ let rec infer variables_state inference_state expression =
       let _, parameters, _ =
         State.lookup_datatype datatype_identifier inference_state
       in
-      let stage, variables_state' =
+      let variables_state', stage =
         Fresh_variable_state.fresh_stage_variable variables_state
       in
-      let arguments, variables_state'' =
+      let variables_state'', arguments =
         List.fold_left
-          (fun (arguments, variables_state) _ ->
-            let argument, variables_state' =
+          (fun (variables_state, arguments) _ ->
+            let variables_state', argument =
               Fresh_variable_state.fresh_type_variable variables_state
             in
-            (argument :: arguments, variables_state'))
-          ([], variables_state') parameters
+            (variables_state', argument :: arguments))
+          (variables_state', []) parameters
       in
       let output_type =
         Type.Datatype
@@ -371,7 +383,7 @@ let rec infer variables_state inference_state expression =
               check variables_state inference_state' inner_expression
                 type_to_check
             in
-            let stage_s, variables_state'' =
+            let variables_state'', stage_s =
               Fresh_variable_state.fresh_stage_variable variables_state'
             in
             let domain'' =
@@ -411,9 +423,10 @@ and check variables_state inference_state expression type_ =
       | Type.Arrow { domain; range } -> (
           match parameter_type with
           | Option.Some parameter_type ->
-              ignore (subtype_unifier domain parameter_type);
+              ignore (subtype_unifier parameter_type domain);
               let inference_state' =
-                State.extend_typing parameter_identifier domain inference_state
+                State.extend_typing parameter_identifier parameter_type
+                  inference_state
               in
               check variables_state inference_state' body range
           | Option.None ->
@@ -484,26 +497,29 @@ and check variables_state inference_state expression type_ =
       check variables_state inference_state
         (Substitution.apply_expression_closure environment expression)
         type_
+  | Expression.Existential_variable { identifier } ->
+      raise (Existential_variable identifier)
 
 let () =
   Printexc.register_printer (function
     | Stage_unification_error { stage1; stage2 } ->
         Option.some
-          (Format.asprintf "The unification of stages @[%a@] and @[%a@] failed"
+          (Format.asprintf
+             "The unification of stages@ @[%a@] and@ @[%a@] failed"
              Syntax_pp.pp_stage stage1 Syntax_pp.pp_stage stage2)
     | Stage_variable_occurs { stage; identifier } ->
         Option.some
           (Format.asprintf
-             "Occurs check failed for variable @[%a@] in stage @[%a@]"
+             "Occurs check failed for variable@ @[%a@] in stage@ @[%a@]"
              Identifier.pp identifier Syntax_pp.pp_stage stage)
     | Type_unification_error { type1; type2 } ->
         Option.some
-          (Format.asprintf "The unification of types @[%a@] and @[%a@] failed"
+          (Format.asprintf "The unification of types@ @[%a@] and@ @[%a@] failed"
              Syntax_pp.pp_type type1 Syntax_pp.pp_type type2)
     | Type_variable_occurs { type_; identifier } ->
         Option.some
           (Format.asprintf
-             "Occurs check failed for variable @[%a@] in type @[%a@]"
+             "Occurs check failed for variable@ @[%a@] in type@ @[%a@]"
              Identifier.pp identifier Syntax_pp.pp_type type_)
     | Expected_datatype_type ->
         Option.some
@@ -513,36 +529,41 @@ let () =
         Option.some
           (Format.asprintf
              "Arity mismatch between parameters and arguments to a datatype")
+    | Existential_variable identifier ->
+        Option.some
+          (Format.asprintf
+             "Existential variable@ @[%a@] encountered during type inference"
+             Identifier.pp identifier)
     | Free_variable identifier ->
         Option.some
           (Format.asprintf
-             "Free variable @[%a@] encountered during type inference"
+             "Free variable@ @[%a@] encountered during type inference"
              Identifier.pp identifier)
     | Apply_non_function type_ ->
         Option.some
           (Format.asprintf
-             "Invalid application of an expression having type @[%a@]"
+             "Invalid application of an expression having type@ @[%a@]"
              Syntax_pp.pp_type type_)
     | Non_synthesizing_expression expression ->
         Option.some
-          (Format.asprintf "Expression @[%a@] does not synthesize a type"
+          (Format.asprintf "Expression@ @[%a@] does not synthesize a type"
              Syntax_pp.pp_expression expression)
     | Type_checking_error { expression; type_ } ->
         Option.some
           (Format.asprintf
-             "The expression @[%a@] does not check against the type @[%a@]"
+             "The expression@ @[%a@] does not check against the type@ @[%a@]"
              Syntax_pp.pp_expression expression Syntax_pp.pp_type type_)
     | Type_subtyping_error { expression; subtype; suptype } ->
         Option.some
           (Format.asprintf
-             "The expression @[%a@] having inferred type @[%a@] is not a \
-              subtype of @[%a@]"
+             "The expression@ @[%a@] having inferred type@ @[%a@] is not a \
+              subtype of@ @[%a@]"
              Syntax_pp.pp_expression expression Syntax_pp.pp_type subtype
              Syntax_pp.pp_type suptype)
     | Unsupported_untyped_recursive_expression expression ->
         Option.some
           (Format.asprintf
-             "Unsupported type inference for untyped recursive expression \
+             "Unsupported type inference for untyped recursive expression@ \
               @[%a@]"
              Syntax_pp.pp_expression expression)
     | Inexhaustive_case_analysis ->
@@ -552,10 +573,12 @@ let () =
     | Stage_variable_positivity_fail { stage_variable; type_ } ->
         Option.some
           (Format.asprintf
-             "Positivity check failed for stage variable @[%a@] in type @[%a@]"
+             "Positivity check failed for stage variable@ @[%a@] in type@ \
+              @[%a@]"
              Identifier.pp stage_variable Syntax_pp.pp_type type_)
     | Illegal_recursive_expression_type { expression; type_ } ->
         Option.some
-          (Format.asprintf "Illegal type @[%a@] for recursive expression @[%a@]"
+          (Format.asprintf
+             "Illegal type@ @[%a@] for recursive expression@ @[%a@]"
              Syntax_pp.pp_type type_ Syntax_pp.pp_expression expression)
     | _ -> Option.none)

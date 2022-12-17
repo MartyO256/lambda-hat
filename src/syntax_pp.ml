@@ -2,14 +2,16 @@ open Syntax_definition
 
 let rec precedence_type type_ =
   match type_ with
-  | Type.Variable _ -> 3
+  | Type.Existential_variable _ | Type.Variable _ -> 3
   | Type.Datatype _ -> 2
   | Type.Arrow _ -> 1
   | Type.Closure { type_; _ } -> precedence_type type_
 
 let rec precedence_expression expression =
   match expression with
-  | Expression.Variable _ | Expression.Constructor _ -> 6
+  | Expression.Existential_variable _ | Expression.Variable _
+  | Expression.Constructor _ ->
+      6
   | Expression.Application _ -> 5
   | Expression.Case _ -> 4
   | Expression.Annotated _ -> 3
@@ -21,6 +23,7 @@ let pp_parenthesized ppf ppv v = Format.fprintf ppf "@[(%a)@]" ppv v
 
 let rec pp_stage ppf stage =
   match stage with
+  | Stage.Existential_variable { identifier } -> Identifier.pp ppf identifier
   | Stage.Variable { identifier } -> Identifier.pp ppf identifier
   | Stage.Successor { stage } -> Format.fprintf ppf "$%a" pp_stage stage
   | Stage.Infinity -> Format.pp_print_string ppf "∞"
@@ -29,8 +32,8 @@ let rec pp_stage ppf stage =
 
 and pp_type ppf type_ =
   match type_ with
-  | Type.Variable { identifier } ->
-      Format.fprintf ppf "'%a" Identifier.pp identifier
+  | Type.Existential_variable { identifier } -> Identifier.pp ppf identifier
+  | Type.Variable { identifier } -> Identifier.pp ppf identifier
   | Type.Arrow { domain; range } ->
       Format.fprintf ppf "@[<2>%a@ →@ %a@]"
         (fun ppf argument ->
@@ -62,6 +65,7 @@ and pp_type ppf type_ =
 
 and pp_type_without_stages ppf type_ =
   match type_ with
+  | Type.Existential_variable { identifier } -> Identifier.pp ppf identifier
   | Type.Variable { identifier } -> Identifier.pp ppf identifier
   | Type.Arrow { domain; range } ->
       Format.fprintf ppf "@[<2>%a@ →@ %a@]"
@@ -92,6 +96,8 @@ and pp_type_without_stages ppf type_ =
 
 and pp_expression ppf expression =
   match expression with
+  | Expression.Existential_variable { identifier } ->
+      Identifier.pp ppf identifier
   | Expression.Variable { identifier } -> Identifier.pp ppf identifier
   | Expression.Constructor { identifier } -> Identifier.pp ppf identifier
   | Expression.Abstraction { parameter_identifier; parameter_type; body } -> (

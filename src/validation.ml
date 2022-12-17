@@ -5,12 +5,22 @@ let rec get_arrow_type_inputs type_ =
   | Type.Closure { type_; environment } ->
       get_arrow_type_inputs (Substitution.apply_type_closure environment type_)
   | Type.Arrow { domain; range } -> domain :: get_arrow_type_inputs range
-  | Type.Datatype _ | Type.Variable _ -> []
+  | Type.Datatype _ | Type.Existential_variable _ | Type.Variable _ -> []
 
-let rec validate_stage _signature _stage = ()
+exception Illegal_existential_stage_variable of identifier
+exception Illegal_existential_type_variable of identifier
+exception Illegal_existential_expression_variable of identifier
+
+let rec validate_stage _signature stage =
+  match stage with
+  | Stage.Existential_variable { identifier } ->
+      raise (Illegal_existential_stage_variable identifier)
+  | _ -> ()
 
 and validate_type signature type_ =
   match type_ with
+  | Type.Existential_variable { identifier } ->
+      raise (Illegal_existential_type_variable identifier)
   | Type.Variable _ -> ()
   | Type.Arrow { domain; range } ->
       validate_type signature domain;
@@ -25,6 +35,8 @@ and validate_type signature type_ =
 
 and validate_expression signature expression =
   match expression with
+  | Expression.Existential_variable { identifier } ->
+      raise (Illegal_existential_expression_variable identifier)
   | Expression.Variable _ -> ()
   | Expression.Constructor { identifier } ->
       ignore (Signature_helpers.lookup_constructor signature identifier)
@@ -68,7 +80,8 @@ let validate_datatype_parameters parameters =
 let rec validate_constructor_end_type datatype_identifier datatype_parameters
     type_ =
   match type_ with
-  | Type.Variable _ -> raise Invalid_constructor_declaration
+  | Type.Existential_variable _ | Type.Variable _ ->
+      raise Invalid_constructor_declaration
   | Type.Arrow { range; _ } ->
       validate_constructor_end_type datatype_identifier datatype_parameters
         range
@@ -125,6 +138,7 @@ let validate_declaration signature declaration =
               let inputs = get_arrow_type_inputs type_ in
               validate_constructor_scheme_positivity inputs identifier
                 parameters;
+              validate_type signature type_;
               let type_variables =
                 List.fold_left
                   (fun accumulator input ->
@@ -152,9 +166,21 @@ let validate_signature signature =
 
 let () =
   Printexc.register_printer (function
+    | Illegal_existential_stage_variable identifier ->
+        Option.some
+          (Format.asprintf "Illegal existential stage variable@ %a"
+             Identifier.pp identifier)
+    | Illegal_existential_type_variable identifier ->
+        Option.some
+          (Format.asprintf "Illegal existential type variable@ %a" Identifier.pp
+             identifier)
+    | Illegal_existential_expression_variable identifier ->
+        Option.some
+          (Format.asprintf "Illegal existential expression variable@ %a"
+             Identifier.pp identifier)
     | Duplicate_datatype_parameters parameters ->
         Option.some
-          (Format.asprintf "Duplicate datatype parameters @[%a@]"
+          (Format.asprintf "Duplicate datatype parameters@ %a"
              (Format.pp_print_list
                 ~pp_sep:(fun ppf () -> Format.fprintf ppf ",@ ")
                 Identifier.pp)

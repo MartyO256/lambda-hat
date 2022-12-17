@@ -1,5 +1,6 @@
 module rec Stage : sig
   type t =
+    | Existential_variable of { identifier : Identifier.t }
     | Variable of { identifier : Identifier.t }
     | Successor of { stage : Stage.t }
     | Infinity
@@ -9,6 +10,7 @@ end =
 
 and Type : sig
   type t =
+    | Existential_variable of { identifier : Identifier.t }
     | Variable of { identifier : Identifier.t }
     | Arrow of { domain : Type.t; range : Type.t }
     | Datatype of {
@@ -22,6 +24,7 @@ end =
 
 and Expression : sig
   type t =
+    | Existential_variable of { identifier : Identifier.t }
     | Variable of { identifier : Identifier.t }
     | Constructor of { identifier : Identifier.t }
     | Abstraction of {

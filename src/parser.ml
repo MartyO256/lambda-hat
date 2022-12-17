@@ -26,6 +26,12 @@
       | <constant>[`^'<stage>] <type>*
       | `(' <type> `)'
 
+    <type-without-stages> ::=
+      | `''<variable>
+      | <type-without-stages> <arrow> <type-without-stages>           (* Right-associative *)
+      | <constant> <type-without-stages>*
+      | `(' <type-without-stages> `)'
+
     <lambda> ::=
       | `\'
       | `λ'
@@ -45,7 +51,7 @@
       | `(' <expression> `)'
 
     <datatype-declaration> ::=
-      | `datatype' <constant> (`''<variable>)* `=' [`|'] <constant> `:' <type> (`|' <constant> `:' <type>)*
+      | `datatype' <constant> (`''<variable>)* `=' [`|'] <constant> `:' <type-without-stages> (`|' <constant> `:' <type>)*
 
     <value-declaration> ::=
       | `let' <variable> `=' <expression>
@@ -53,6 +59,9 @@
     <declaration ::=
       | <datatype-declaration>
       | <value-declaration>
+
+    <signature> ::=
+      | <declaration>*
 *)
 
 (*=
@@ -71,6 +80,20 @@
     <type3> ::=
       | `''<variable>
       | `(' <type> `)'
+
+    <type-without-stages> ::=
+      | <type-without-stages1>
+
+    <type-without-stages1> ::=
+      | <type-without-stages2> (<arrow> <type-without-stages2>)*       (* Right-associative *)
+
+    <type-without-stages2> ::=
+      | <constant> <type-without-stages3>*
+      | <type-without-stages3>
+
+    <type-without-stages3> ::=
+      | `''<variable>
+      | `(' <type-without-stages> `)'
 
     <expression> ::=
       | <expression1>
@@ -100,9 +123,9 @@
       | `(' <expression> `)'
 *)
 
-include Angstrom
-
 (** {1 λ^ Parsers} *)
+
+include Angstrom
 
 let ascii_lambda = string "\\"
 let utf8_lambda = string "λ"
